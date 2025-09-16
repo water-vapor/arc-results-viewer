@@ -1,0 +1,7 @@
+streamlit
+streamlit-aggrid
+duckdb
+pandas
+numpy
+pyarrow
+tqdm
