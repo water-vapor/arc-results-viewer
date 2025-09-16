@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""Build a lightweight parquet for the real ARC viewer.
-
-The raw `results_json/*.json` files store integer grids for every model
-attempt. We keep those grids intact and only pre-compute simple accuracy
-columns so the Streamlit app stays responsive without this script doing
-heavy image work.
-"""
-
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -17,7 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 
 
-MAX_SEEDS_PER_MODEL = 5  # keep a handful of samples per model for the UI
+MAX_SEEDS_PER_MODEL = 10  # keep a handful of samples per model for the UI
 
 
 def load_model_results() -> Dict[str, Dict[str, List[list]]]:
