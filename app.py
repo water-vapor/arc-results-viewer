@@ -1,14 +1,11 @@
-# app3.py — ARC Results Viewer with real data and on-demand rendering
-
-from __future__ import annotations
-
 import json
+from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import duckdb
 import pandas as pd
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder
 
 from utils import grid_to_image, grids_equal
 
@@ -179,6 +176,9 @@ def show_model_attempts(
                         )
 
 
+TABLE_SESSION_KEY = "_arc_results_active_table"
+
+
 def main() -> None:
     st.sidebar.subheader("⚙️ Settings")
     parquet_path = st.sidebar.text_input("Parquet path (optional)", value="", key="parquet_path")
@@ -188,6 +188,13 @@ def main() -> None:
     sql_in = st.sidebar.text_area("SQL (SELECT … or WHERE …)", value="", height=110, key="sql_input")
 
     table_height = st.sidebar.slider("Table height", min_value=320, max_value=900, value=520, step=20)
+
+    st.sidebar.subheader("💾 Export")
+    default_csv_name = "arc_results_filtered.csv"
+    csv_filename = st.sidebar.text_input(
+        "CSV filename", value=default_csv_name, key="csv_filename"
+    ).strip()
+    save_csv_clicked = st.sidebar.button("Save table to CSV", key="save_csv")
 
     df = load_df(parquet_path or None)
     if df.empty:
@@ -227,8 +234,33 @@ def main() -> None:
         height=table_height,
         theme="balham",
         allow_unsafe_jscode=False,
-        update_on=["selectionChanged"],
+        update_on=["selectionChanged", "filterChanged", "sortChanged"],
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+        key="arc_results_table",
     )
+
+    # Capture the current grid view; fall back to previous view if no grid event triggered this run.
+    grid_response = getattr(resp, "grid_response", {}) if resp is not None else {}
+    if isinstance(grid_response, dict) and grid_response:
+        data_obj = resp.data
+        grid_df = data_obj.copy() if isinstance(data_obj, pd.DataFrame) else pd.DataFrame(data_obj)
+        st.session_state[TABLE_SESSION_KEY] = grid_df
+    else:
+        cached_df = st.session_state.get(TABLE_SESSION_KEY)
+        grid_df = cached_df.copy() if isinstance(cached_df, pd.DataFrame) else df_filtered.copy()
+    grid_df = grid_df.reindex(columns=df_filtered.columns)
+
+    if save_csv_clicked:
+        if not csv_filename:
+            st.sidebar.error("Please provide a filename before saving.")
+        else:
+            csv_path = Path(csv_filename).expanduser()
+            try:
+                grid_df.to_csv(csv_path, index=False)
+            except Exception as exc:
+                st.sidebar.error(f"Failed to save CSV: {exc}")
+            else:
+                st.sidebar.success(f"Saved {len(grid_df)} rows to {csv_path}")
 
     sel = resp.get("selected_rows", [])
     if sel is None:
