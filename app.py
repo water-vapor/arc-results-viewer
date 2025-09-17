@@ -14,6 +14,17 @@ st.set_page_config(page_title="ARC Results Viewer", layout="wide", initial_sideb
 
 
 @st.cache_data(show_spinner=False)
+def load_meta_df() -> pd.DataFrame:
+    """Load the ARC training metadata CSV."""
+
+    meta_path = Path("dataset_meta/arc_training_meta.csv")
+    meta_df = pd.read_csv(meta_path)
+    meta_df = meta_df.rename(columns={"uid": "problem_id"})
+    meta_df["problem_id"] = meta_df["problem_id"].astype(str)
+    return meta_df
+
+
+@st.cache_data(show_spinner=False)
 def load_df(parquet_path: str | None) -> pd.DataFrame:
     """Load the processed parquet file and normalise JSON columns."""
 
@@ -39,6 +50,16 @@ def load_df(parquet_path: str | None) -> pd.DataFrame:
         df["assets"] = df["assets"].map(_as_dict)
     else:
         df["assets"] = [{} for _ in range(len(df))]
+
+    df["problem_id"] = df["problem_id"].astype(str)
+
+    meta_df = load_meta_df()
+    meta_columns = [c for c in meta_df.columns if c != "problem_id"]
+    if meta_columns:
+        df = df.drop(columns=[c for c in meta_columns if c in df.columns], errors="ignore")
+    df = df.merge(meta_df, on="problem_id", how="left")
+
+    df = df.drop(columns=[c for c in ["title", "category"] if c in df.columns], errors="ignore")
 
     return df
 
@@ -200,10 +221,13 @@ def main() -> None:
     if df.empty:
         st.stop()
 
+    meta_df = load_meta_df()
+    meta_cols = [c for c in meta_df.columns if c != "problem_id"]
+
     models, acc_cols, corr_cols = available_models(df)
     scalar_cols = [
         c
-        for c in ["problem_id", "title", "category", "best_acc", "any_correct", *acc_cols, *corr_cols]
+        for c in ["problem_id", *meta_cols, "best_acc", "any_correct", *acc_cols, *corr_cols]
         if c in df.columns
     ]
 
@@ -219,13 +243,15 @@ def main() -> None:
     grid_builder.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
     grid_builder.configure_selection(selection_mode="single", use_checkbox=True)
     grid_builder.configure_grid_options(rowSelection="single")
-    for col, opts in {
-        "problem_id": {"pinned": "left", "width": 130},
-        "title": {"pinned": "left", "width": 220},
-        "category": {"width": 130},
-    }.items():
-        if col in df_filtered.columns:
-            grid_builder.configure_column(col, **opts)
+    pinned_columns = []
+    if "problem_id" in df_filtered.columns:
+        pinned_columns.append(("problem_id", {"pinned": "left", "width": 130}))
+    for meta_col in meta_cols:
+        if meta_col in df_filtered.columns:
+            pinned_columns.append((meta_col, {"pinned": "left"}))
+
+    for col, opts in pinned_columns:
+        grid_builder.configure_column(col, **opts)
 
     st.caption("Select a problem to view ARC grids and model attempts.")
     resp = AgGrid(

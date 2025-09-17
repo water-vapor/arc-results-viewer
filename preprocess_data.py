@@ -45,11 +45,7 @@ def process_problem(
     model_names: Iterable[str],
 ) -> Dict[str, object]:
     """Collect flattened metrics + raw attempts for one ARC problem."""
-    row: Dict[str, object] = {
-        "problem_id": problem_id,
-        "title": f"ARC Problem {problem_id}",
-        "category": "training",
-    }
+    row: Dict[str, object] = {"problem_id": problem_id}
 
     best_acc = 0.0
     any_correct_global = False
@@ -89,6 +85,13 @@ def main() -> None:
         rows.append(process_problem(problem_id, model_results, model_names))
 
     df = pd.DataFrame(rows)
+    df["problem_id"] = df["problem_id"].astype(str)
+
+    meta_df = pd.read_csv("dataset_meta/arc_training_meta.csv")
+    meta_df = meta_df.rename(columns={"uid": "problem_id"})
+    meta_df["problem_id"] = meta_df["problem_id"].astype(str)
+    df = df.merge(meta_df, on="problem_id", how="left")
+
     df.to_parquet("arc_results_processed.parquet", index=False)
 
     print(f"\nSaved {len(df)} problems to arc_results_processed.parquet")
