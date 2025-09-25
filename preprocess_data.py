@@ -96,8 +96,22 @@ def main() -> None:
 
     print(f"\nSaved {len(df)} problems to arc_results_processed.parquet")
     print(f"Models: {model_names}")
-    print(f"Avg accuracy: {df['best_acc'].mean():.1%}")
-    print(f"Solved problems: {int(df['any_correct'].sum())}/{len(df)}")
+
+    print("\nPer-model metrics:")
+    for model in model_names:
+        mean_acc = df[f"acc_{model}"].mean()
+        any_correct = df[f"correct_{model}"].mean()
+        print(f"{model}: avg accuracy {mean_acc:.1%}, any correct {any_correct:.1%}")
+
+    acc_cols = [f"acc_{model}" for model in model_names]
+    correct_cols = [f"correct_{model}" for model in model_names]
+    overall_acc = df[acc_cols].to_numpy().mean() if acc_cols else 0.0
+    overall_any = (
+        df[correct_cols].any(axis=1).mean() if correct_cols else 0.0
+    )
+
+    print("\nAll files avg accuracy: {:.1%}".format(overall_acc))
+    print("All files any correct: {:.1%}".format(overall_any))
 
 
 if __name__ == "__main__":
