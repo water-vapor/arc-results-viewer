@@ -28,6 +28,7 @@ def check_correctness(prediction: list, ground_truth: List[list]) -> bool:
         candidates = [att[i] for att in attempts if i < len(att)]
         if not candidates or all(c != target for c in candidates):
             return False
+
     return True
 
 
@@ -99,8 +100,6 @@ def main() -> None:
     meta_df["problem_id"] = meta_df["problem_id"].astype(str)
     df = df.merge(meta_df, on="problem_id", how="left")
 
-    df.to_parquet("arc_results_processed.parquet", index=False)
-
     for model in model_names:
         acc = df[f"acc_{model}"].mean()
         correct = df[f"correct_{model}"].mean()
@@ -109,6 +108,10 @@ def main() -> None:
     acc_cols = [f"acc_{model}" for model in model_names]
     correct_cols = [f"correct_{model}" for model in model_names]
     print(f"\nOverall: accuracy {df[acc_cols].to_numpy().mean():.1%}, any correct {df[correct_cols].any(axis=1).mean():.1%}")
+
+    # Drop correct_* columns before saving
+    df = df.drop(columns=correct_cols)
+    df.to_parquet("arc_results_processed.parquet", index=False)
 
 
 if __name__ == "__main__":

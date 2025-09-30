@@ -46,11 +46,10 @@ def load_arc_dataset() -> tuple[Dict[str, Any], Dict[str, List[list]]]:
         return {}, {}
 
 
-def available_models(df: pd.DataFrame) -> tuple[List[str], List[str], List[str]]:
+def available_models(df: pd.DataFrame) -> tuple[List[str], List[str]]:
     models = sorted({col[4:] for col in df.columns if col.startswith("acc_")})
     acc_cols = [f"acc_{m}" for m in models if f"acc_{m}" in df.columns]
-    corr_cols = [f"correct_{m}" for m in models if f"correct_{m}" in df.columns]
-    return models, acc_cols, corr_cols
+    return models, acc_cols
 
 
 @st.cache_data(show_spinner=False)
@@ -172,16 +171,16 @@ TABLE_SESSION_KEY = "_arc_results_active_table"
 
 
 def main() -> None:
-    st.sidebar.subheader("⚙️ Settings")
+    st.sidebar.subheader("Settings")
     parquet_path = st.sidebar.text_input("Parquet path (optional)", value="", key="parquet_path")
 
-    st.sidebar.subheader("🔍 SQL Filter")
+    st.sidebar.subheader("SQL Filter")
     st.sidebar.caption("Enter a full SELECT … or a WHERE fragment.")
     sql_in = st.sidebar.text_area("SQL (SELECT … or WHERE …)", value="", height=110, key="sql_input")
 
     table_height = st.sidebar.slider("Table height", min_value=320, max_value=900, value=520, step=20)
 
-    st.sidebar.subheader("💾 Export")
+    st.sidebar.subheader("Export")
     default_csv_name = "arc_results_filtered.csv"
     csv_filename = st.sidebar.text_input(
         "CSV filename", value=default_csv_name, key="csv_filename"
@@ -196,7 +195,7 @@ def main() -> None:
     meta_df = pd.read_csv("dataset_meta/arc_training_meta.csv")
     meta_cols = [c for c in meta_df.columns if c != "uid"]
 
-    models, acc_cols, corr_cols = available_models(df)
+    models, acc_cols = available_models(df)
 
     # Exclude assets column from table display
     scalar_cols = [c for c in df.columns if c != "assets"]
@@ -208,6 +207,23 @@ def main() -> None:
     except Exception as exc:
         st.error(f"SQL error: {exc}")
         df_filtered = df[scalar_cols]
+
+    # Reorder columns to match display order: problem_id, meta_cols, then rest
+    display_order = []
+    if "problem_id" in df_filtered.columns:
+        display_order.append("problem_id")
+    for meta_col in meta_cols:
+        if meta_col in df_filtered.columns:
+            display_order.append(meta_col)
+    for col in df_filtered.columns:
+        if col not in display_order:
+            display_order.append(col)
+    df_filtered = df_filtered[display_order]
+
+    # Column visibility controls
+    st.sidebar.subheader("Column Visibility")
+    visible_cols = [col for col in df_filtered.columns if st.sidebar.checkbox(col, value=True, key=f"col_vis_{col}")]
+    df_filtered = df_filtered[visible_cols]
 
     grid_builder = GridOptionsBuilder.from_dataframe(df_filtered)
     grid_builder.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
@@ -221,7 +237,10 @@ def main() -> None:
         if meta_col in df_filtered.columns:
             grid_builder.configure_column(meta_col, pinned="left")
 
-    st.caption("Select a problem to view ARC grids and model attempts.")
+    cols = st.columns([4, 1])
+    cols[0].caption("Select a problem to view ARC grids and model attempts.")
+    count_placeholder = cols[1].empty()
+
     resp = AgGrid(
         df_filtered,
         gridOptions=grid_builder.build(),
@@ -243,6 +262,8 @@ def main() -> None:
         cached_df = st.session_state.get(TABLE_SESSION_KEY)
         grid_df = cached_df.copy() if isinstance(cached_df, pd.DataFrame) else df_filtered.copy()
     grid_df = grid_df.reindex(columns=df_filtered.columns)
+
+    count_placeholder.markdown(f"<div style='text-align: right; font-size: 0.8em;'>{len(grid_df)} rows × {len(grid_df.columns)} cols</div>", unsafe_allow_html=True)
 
     if save_csv_clicked:
         if not csv_filename:
