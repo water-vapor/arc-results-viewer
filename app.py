@@ -122,7 +122,7 @@ def show_model_attempts(
     for tab, model in zip(tabs, models_with_data):
         with tab:
             acc = float(row.get(f"acc_{model}", 0.0) or 0.0)
-            corr = bool(row.get(f"correct_{model}", False))
+            corr = acc > 0.0
             tab.write(f"**{model}** — Correct: {'✅' if corr else '❌'} — Accuracy: {int(round(acc * 100))}%")
 
             seeds = solutions.get(model, {})
