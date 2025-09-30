@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 import duckdb
+import numpy as np
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder
@@ -14,20 +15,7 @@ st.set_page_config(page_title="ARC Results Viewer", layout="wide", initial_sideb
 
 
 @st.cache_data(show_spinner=False)
-def load_meta_df() -> pd.DataFrame:
-    """Load the ARC training metadata CSV."""
-
-    meta_path = Path("dataset_meta/arc_training_meta.csv")
-    meta_df = pd.read_csv(meta_path)
-    meta_df = meta_df.rename(columns={"uid": "problem_id"})
-    meta_df["problem_id"] = meta_df["problem_id"].astype(str)
-    return meta_df
-
-
-@st.cache_data(show_spinner=False)
 def load_df(parquet_path: str | None) -> pd.DataFrame:
-    """Load the processed parquet file and normalise JSON columns."""
-
     path = parquet_path or "arc_results_processed.parquet"
     try:
         df = pd.read_parquet(path)
@@ -38,29 +26,9 @@ def load_df(parquet_path: str | None) -> pd.DataFrame:
         st.error(f"Failed to load data: {exc}")
         return pd.DataFrame()
 
-    def _as_dict(value: Any) -> Dict[str, Any]:
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except Exception:
-                return {}
-        return value if isinstance(value, dict) else {}
-
-    if "assets" in df.columns:
-        df["assets"] = df["assets"].map(_as_dict)
-    else:
-        df["assets"] = [{} for _ in range(len(df))]
-
     df["problem_id"] = df["problem_id"].astype(str)
-
-    meta_df = load_meta_df()
-    meta_columns = [c for c in meta_df.columns if c != "problem_id"]
-    if meta_columns:
-        df = df.drop(columns=[c for c in meta_columns if c in df.columns], errors="ignore")
-    df = df.merge(meta_df, on="problem_id", how="left")
-
-    df = df.drop(columns=[c for c in ["title", "category"] if c in df.columns], errors="ignore")
-
+    if "assets" not in df.columns:
+        df["assets"] = [{} for _ in range(len(df))]
     return df
 
 
@@ -140,9 +108,9 @@ def show_problem_overview(container, pid: str, challenge: Dict[str, Any], soluti
 def show_model_attempts(
     row: Dict[str, Any], models: Iterable[str], expected_outputs: List[List[int]] | List[Any]
 ) -> None:
-    assets = row.get("assets") or {}
-    solutions = assets.get("solutions") or {}
-    if not solutions:
+    assets = row.get("assets", {})
+    solutions = assets.get("solutions", {})
+    if len(solutions) == 0:
         st.info("No attempt grids found for this problem.")
         return
 
@@ -158,7 +126,7 @@ def show_model_attempts(
             corr = bool(row.get(f"correct_{model}", False))
             tab.write(f"**{model}** — Correct: {'✅' if corr else '❌'} — Accuracy: {int(round(acc * 100))}%")
 
-            seeds = solutions.get(model) or {}
+            seeds = solutions.get(model, {})
             seed_options = sorted(seeds.keys(), key=lambda s: int(s))
             if not seed_options:
                 tab.info("No seeds with attempts for this model.")
@@ -166,18 +134,21 @@ def show_model_attempts(
 
             selected_seed = tab.selectbox("Seed", seed_options, key=f"seed_{model}_{row['problem_id']}")
             seed_payload = seeds.get(selected_seed, {})
-            attempts = seed_payload.get("attempts") or []
-            if not attempts:
+            attempts = seed_payload.get("attempts", [])
+            if len(attempts) == 0:
                 tab.info("No attempts recorded for this seed.")
                 continue
 
-            num_tests = len(attempts[0]) if attempts and isinstance(attempts[0], list) else 0
+            num_tests = len(attempts[0]) if len(attempts) > 0 and isinstance(attempts[0], (list, np.ndarray)) else 0
             for test_idx in range(num_tests):
                 tab.write(f"**Test {test_idx + 1}:**")
                 cols = tab.columns(len(attempts))
                 expected_grid = expected_outputs[test_idx] if test_idx < len(expected_outputs) else None
                 for attempt_idx, attempt in enumerate(attempts):
                     grid = attempt[test_idx] if test_idx < len(attempt) else None
+                    # Convert numpy object arrays to proper lists for visualization
+                    if grid is not None and isinstance(grid, np.ndarray) and grid.dtype == object:
+                        grid = [list(row) if isinstance(row, np.ndarray) else row for row in grid]
                     img = grid_to_image(grid)
                     if img is not None:
                         if expected_grid is None:
@@ -221,15 +192,14 @@ def main() -> None:
     if df.empty:
         st.stop()
 
-    meta_df = load_meta_df()
-    meta_cols = [c for c in meta_df.columns if c != "problem_id"]
+    # Load meta columns from the meta CSV
+    meta_df = pd.read_csv("dataset_meta/arc_training_meta.csv")
+    meta_cols = [c for c in meta_df.columns if c != "uid"]
 
     models, acc_cols, corr_cols = available_models(df)
-    scalar_cols = [
-        c
-        for c in ["problem_id", *meta_cols, "best_acc", "any_correct", *acc_cols, *corr_cols]
-        if c in df.columns
-    ]
+
+    # Exclude assets column from table display
+    scalar_cols = [c for c in df.columns if c != "assets"]
 
     try:
         df_filtered = apply_sql(df[scalar_cols], sql_in)
@@ -243,15 +213,13 @@ def main() -> None:
     grid_builder.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
     grid_builder.configure_selection(selection_mode="single", use_checkbox=True)
     grid_builder.configure_grid_options(rowSelection="single")
-    pinned_columns = []
+
+    # Pin problem_id and meta columns to the left
     if "problem_id" in df_filtered.columns:
-        pinned_columns.append(("problem_id", {"pinned": "left", "width": 130}))
+        grid_builder.configure_column("problem_id", pinned="left", width=130)
     for meta_col in meta_cols:
         if meta_col in df_filtered.columns:
-            pinned_columns.append((meta_col, {"pinned": "left"}))
-
-    for col, opts in pinned_columns:
-        grid_builder.configure_column(col, **opts)
+            grid_builder.configure_column(meta_col, pinned="left")
 
     st.caption("Select a problem to view ARC grids and model attempts.")
     resp = AgGrid(

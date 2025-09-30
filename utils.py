@@ -1,9 +1,4 @@
-"""Shared helpers for ARC visualisations."""
-
-from __future__ import annotations
-
 from typing import Sequence
-
 import numpy as np
 
 
@@ -27,12 +22,6 @@ GRID_COLOR = np.array([80, 80, 80], dtype=np.uint8)
 
 
 def grid_to_image(grid: Sequence[Sequence[int]], max_cell_size: int = 32) -> np.ndarray | None:
-    """Convert an ARC grid to a small RGB image as a NumPy array.
-
-    The Streamlit app can feed this directly to ``st.image``. We upscale each
-    cell using ``np.repeat`` which keeps the code simple (no Matplotlib).
-    """
-
     if grid is None:
         return None
 
@@ -65,12 +54,15 @@ def grid_to_image(grid: Sequence[Sequence[int]], max_cell_size: int = 32) -> np.
     return img
 
 
+def normalize_grid(grid: Sequence[Sequence[int]]) -> tuple:
+    """Normalize grid to comparable tuple format."""
+    return tuple(tuple(int(c) for c in row) for row in grid)
+
+
 def grids_equal(a: Sequence[Sequence[int]] | None, b: Sequence[Sequence[int]] | None) -> bool:
     """Return True if two grids have identical shape and values."""
-
     if a is None or b is None:
         return False
-
     arr_a = np.asarray(a)
     arr_b = np.asarray(b)
     if arr_a.ndim != 2 or arr_b.ndim != 2:
